@@ -48,7 +48,7 @@ class raibotLearningController : public Controller {
   bool isRealRobot_;
   int clk_ = 0;
   double control_dt_, communication_dt_;
-  raisim::nn::Linear<float, 133, 12, raisim::nn::ActivationType::leaky_relu> actor_{{512, 400, 128}};
+  raisim::nn::Linear<float, 133, 12, raisim::nn::ActivationType::leaky_relu> actor_;
 
   parameter::ParameterContainer & param_;
   parameter::ParameterContainer & raibotParam_;
