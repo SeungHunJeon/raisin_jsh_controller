@@ -72,9 +72,9 @@ bool raibotLearningController::create(raisim::World *world) {
 }
 
 bool raibotLearningController::init(raisim::World *world) {
-//  raibotController_.init(world);
-  raibotController_.create(world);
-  raibotController_.reset();
+  raibotController_.init(world);
+//  raibotController_.create(world);
+//  raibotController_.reset();
 
   return true;
 }

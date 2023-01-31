@@ -77,6 +77,8 @@ class RaiboPositionController {
     return true;
   };
 
+  bool init(raisim::World *world) { return true; }
+
   void updateHistory() {
     /// joint angles
     historyTempMemory_ = jointPositionHistory_;
