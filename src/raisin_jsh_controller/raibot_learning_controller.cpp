@@ -28,8 +28,8 @@ raibotLearningController::raibotLearningController()
 }
 
 bool raibotLearningController::create(raisim::World *world) {
-  control_dt_ = 0.01;
-  communication_dt_ = 0.00025;
+  control_dt_ = 0.005;
+  communication_dt_ = 0.001;
   raibotController_.create(world);
 
   isRealRobot_ = raibotParam_("real_robot");
