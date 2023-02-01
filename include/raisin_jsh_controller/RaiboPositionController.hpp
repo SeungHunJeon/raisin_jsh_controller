@@ -2,12 +2,12 @@
 // Created by jemin on 2/25/20.
 //
 
-#ifndef _RAISIM_GYM_RAIBO_POSITION_DESTINATION_HPP
-#define _RAISIM_GYM_RAIBO_POSITION_DESTINATION_HPP
+#ifndef _RAISIM_GYM_RAIBO_POSITION_DESTINATION2_HPP
+#define _RAISIM_GYM_RAIBO_POSITION_DESTINATION2_HPP
 
+#include "BasicEigenTypes.hpp"
 #include "raisim/World.hpp"
 #include <set>
-#include "helper/BasicEigenTypes.hpp"
 
 namespace raisim {
 
@@ -21,6 +21,7 @@ class RaiboPositionController {
 
     /// Observation
     jointPositionHistory_.setZero(nJoints_ * historyLength_);
+//    std::cout << "RaiboPosition Controller Create !!" << std::endl;
     jointVelocityHistory_.setZero(nJoints_ * historyLength_);
     historyTempMemory_.setZero(nJoints_ * historyLength_);
     nominalJointConfig_.setZero(nJoints_);
@@ -41,26 +42,54 @@ class RaiboPositionController {
     obMean_.setZero(obDim_);
     obStd_.setZero(obDim_);
     obDouble_.setZero(obDim_);
+    obNormed_.setZero(obDim_);
+
+    command_ = {0.0, 0.0, 0.0};
+    target.setZero();
 
     /// pd controller
     jointPgain_.setZero(gvDim_); jointPgain_.tail(nJoints_).setConstant(60.0);
     jointDgain_.setZero(gvDim_); jointDgain_.tail(nJoints_).setConstant(0.5);
-    raibo_->setPdGains(jointPgain_, jointDgain_);
+//    raibo_->setPdGains(jointPgain_, jointDgain_);
     pTarget_.setZero(gcDim_); vTarget_.setZero(gvDim_);
 
-    /// indices of links that should not make contact with ground
-    footIndices_.push_back(raibo_->getBodyIdx("LF_SHANK"));
-    footIndices_.push_back(raibo_->getBodyIdx("RF_SHANK"));
-    footIndices_.push_back(raibo_->getBodyIdx("LH_SHANK"));
-    footIndices_.push_back(raibo_->getBodyIdx("RH_SHANK"));
-    RSFATAL_IF(std::any_of(footIndices_.begin(), footIndices_.end(), [](int i){return i < 0;}), "footIndices_ not found")
+    /// observation
+    obMean_ << 0.5, /// average height
+        0.0, 0.0, 1.4, /// gravity axis 3
+        Eigen::VectorXd::Constant(6, 0.0), /// body lin/ang vel 6
+        nominalJointConfig_, /// joint pos
+        Eigen::VectorXd::Constant(nJoints_ * (4 - 1), 0.0), /// joint position error history
+        Eigen::VectorXd::Constant(nJoints_ * 4, 0.0), /// joint vel history
+//        Eigen::VectorXd::Constant(scanConfig_.sum() * 4, -0.03), /// height scan
+        nominalJointConfig_, /// previous action
+        nominalJointConfig_, /// preprev action
+        Eigen::VectorXd::Constant(3, 0.0); /// command
 
-    /// indicies of the foot frame
-    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("LF_S2F"));
-    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("RF_S2F"));
-    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("LH_S2F"));
-    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("RH_S2F"));
-    RSFATAL_IF(std::any_of(footFrameIndicies_.begin(), footFrameIndicies_.end(), [](int i){return i < 0;}), "footFrameIndicies_ not found")
+    obStd_ << 0.05, /// height
+        Eigen::VectorXd::Constant(3, 0.3), /// gravity axes
+        Eigen::VectorXd::Constant(3, 0.6), /// linear velocity
+        Eigen::VectorXd::Constant(3, 1.0), /// angular velocities
+        Eigen::VectorXd::Constant(nJoints_, 1.), /// joint angles
+        Eigen::VectorXd::Constant(nJoints_ * (4 - 1), 0.6), /// joint position error history
+        Eigen::VectorXd::Constant(nJoints_ * 4, 10.0), /// joint velocities
+//        Eigen::VectorXd::Constant(scanConfig_.sum() * 4, 0.1),
+        actionStd_ * 1.5, /// previous action
+        actionStd_ * 1.5, /// previous action
+        .5, 0.3, 0.6; /// command
+
+//    /// indices of links that should not make contact with ground
+//    footIndices_.push_back(raibo_->getBodyIdx("LF_SHANK"));
+//    footIndices_.push_back(raibo_->getBodyIdx("RF_SHANK"));
+//    footIndices_.push_back(raibo_->getBodyIdx("LH_SHANK"));
+//    footIndices_.push_back(raibo_->getBodyIdx("RH_SHANK"));
+//    RSFATAL_IF(std::any_of(footIndices_.begin(), footIndices_.end(), [](int i){return i < 0;}), "footIndices_ not found")
+//
+//    /// indicies of the foot frame
+//    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("LF_S2F"));
+//    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("RF_S2F"));
+//    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("LH_S2F"));
+//    footFrameIndicies_.push_back(raibo_->getFrameIdxByName("RH_S2F"));
+//    RSFATAL_IF(std::any_of(footFrameIndicies_.begin(), footFrameIndicies_.end(), [](int i){return i < 0;}), "footFrameIndicies_ not found")
 
 //    /// heightmap
 //    scanCos_.resize(scanConfig_.size(), scanConfig_.maxCoeff());
@@ -76,8 +105,6 @@ class RaiboPositionController {
 
     return true;
   };
-
-  bool init(raisim::World *world) { return true; }
 
   void updateHistory() {
     /// joint angles
@@ -106,31 +133,32 @@ class RaiboPositionController {
     bodyLinVel_ = baseRot_.e().transpose() * gv_.segment(0, 3);
     bodyAngVel_ = baseRot_.e().transpose() * gv_.segment(3, 3);
 
-    /// foot info
-    for (size_t i = 0; i < 4; i++) {
-      raibo_->getFramePosition(footFrameIndicies_[i], footPos_[i]);
-      raibo_->getFrameVelocity(footFrameIndicies_[i], footVel_[i]);
-    }
-
-    /// height map
-    controlFrameX_ =
-        {baseRot_[0], baseRot_[1], 0.}; /// body x axis projected on the world x-y plane, expressed in the world frame
-    controlFrameX_ /= controlFrameX_.norm();
-    raisim::cross(zAxis_, controlFrameX_, controlFrameY_);
-
-    /// check if the feet are in contact with the ground
-
-    for (auto &fs: footContactState_) fs = false;
-    for (auto &contact: raibo_->getContacts()) {
-      auto it = std::find(footIndices_.begin(), footIndices_.end(), contact.getlocalBodyIndex());
-      size_t index = it - footIndices_.begin();
-      if (index < 4 && !contact.isSelfCollision())
-        footContactState_[index] = true;
-    }
+//    /// foot info
+//    for (size_t i = 0; i < 4; i++) {
+//      raibo_->getFramePosition(footFrameIndicies_[i], footPos_[i]);
+//      raibo_->getFrameVelocity(footFrameIndicies_[i], footVel_[i]);
+//    }
+//
+//    /// height map
+//    controlFrameX_ =
+//        {baseRot_[0], baseRot_[1], 0.}; /// body x axis projected on the world x-y plane, expressed in the world frame
+//    controlFrameX_ /= controlFrameX_.norm();
+//    raisim::cross(zAxis_, controlFrameX_, controlFrameY_);
+//
+//    /// check if the feet are in contact with the ground
+//
+//    for (auto &fs: footContactState_) fs = false;
+//    for (auto &contact: raibo_->getContacts()) {
+//      auto it = std::find(footIndices_.begin(), footIndices_.end(), contact.getlocalBodyIndex());
+//      size_t index = it - footIndices_.begin();
+//      if (index < 4 && !contact.isSelfCollision())
+//        footContactState_[index] = true;
+//    }
   }
 
   const Eigen::VectorXd& getObservation() {
-    return obDouble_;
+    obNormed_ = (obDouble_ - obMean_).cwiseQuotient(obStd_);
+    return obNormed_;
   }
 
   bool advance(const Eigen::Ref<EigenVec>& action) {
@@ -148,31 +176,31 @@ class RaiboPositionController {
     return true;
   }
 
-  void reset() {
+  void reset(raisim::World *world) {
     raibo_->getState(gc_, gv_);
     jointTarget_ = gc_.tail(12);
     previousAction_.setZero();
     prevprevAction_.setZero();
 
     // history
-    jointPositionHistory_ = nominalJointConfig_;
+    jointPositionHistory_.setZero();
 
     jointVelocityHistory_.setZero();
   }
 
-  [[nodiscard]] bool isTerminalState(float &terminalReward) {
-    terminalReward = float(terminalRewardCoeff_);
+//  [[nodiscard]] bool isTerminalState(float &terminalReward) {
+//    terminalReward = float(terminalRewardCoeff_);
+//
+//    /// if the contact body is not feet
+//    for (auto &contact: raibo_->getContacts())
+//      if (std::find(footIndices_.begin(), footIndices_.end(), contact.getlocalBodyIndex()) == footIndices_.end() || contact.isSelfCollision())
+//        return true;
+//
+//    terminalReward = 0.f;
+//    return false;
+//  }
 
-    /// if the contact body is not feet
-    for (auto &contact: raibo_->getContacts())
-      if (std::find(footIndices_.begin(), footIndices_.end(), contact.getlocalBodyIndex()) == footIndices_.end() || contact.isSelfCollision())
-        return true;
-
-    terminalReward = 0.f;
-    return false;
-  }
-
-  void updateObservation() {
+  void updateObservation(raisim::World *world) {
 //    updateHeightScan(map, gen_, normDist_);
     updateStateVariables();
     /// height of the origin of the body frame
@@ -181,6 +209,7 @@ class RaiboPositionController {
 
     /// body orientation
     obDouble_.segment(1, 3) = baseRot_.e().row(2);
+//    std::cout << "Rotational Vector : " << baseRot_.e().row(2) << std::endl;
 
     /// body velocities
     obDouble_.segment(4, 3) = bodyLinVel_;
@@ -208,7 +237,10 @@ class RaiboPositionController {
 
     Eigen::Vector3d posXyz; posXyz << gc_[0], gc_[1], gc_[2];
 //    Eigen::Vector3d target; target << command[0], command[1], map->getHeight(command[0], command[1])+0.56;
-    Eigen::Vector3d target; target << command_[0], command_[1], 0.56;
+
+
+
+//    Eigen::Vector3d targetRel = (target + pos_0) - posXyz;
     Eigen::Vector3d targetRel = target - posXyz;
     Eigen::Vector3d targetRelBody = baseRot_.e().transpose() * targetRel;
     const double dist = targetRelBody.norm();
@@ -219,9 +251,19 @@ class RaiboPositionController {
     obDouble_[34 + 2 * nJoints_ * 4 + 2] = std::min(3., dist);
   }
 
-  void setCommand(const Eigen::Ref<EigenVec>& command) {
-      command_ = command.cast<double>();
+  Eigen::Vector3d getTargetPosition() {
+    return this->target;
+  }
 
+  void setCommand(const Eigen::Ref<EigenVec>& command) {
+    updateStateVariables();
+    command_ = command.cast<double>();
+    pos_0 = raibo_->getBasePosition().e();
+    pos_0(2) = 0;
+    Eigen::Vector3d command_w;
+    command_w = baseRot_.e() * command_;
+    target << command_w(0), command_w(1), 0.56;
+    target += pos_0;
 //      // project to centrifugal accel. vxy * wz = 0.3 * g
 //      if (std::abs(command_(2)) - 2.943 / (command_.head(2).norm() + 1e-8) > 0) {
 //          command_(2) = std::copysign(2.943 / (command_.head(2).norm() + 1e-8), command_(2));
@@ -231,8 +273,25 @@ class RaiboPositionController {
 
   inline void setStandingMode(bool mode) { standingMode_ = mode; }
 
+  [[nodiscard]] void setJointPositionHistory(Eigen::VectorXd &jointPositionHistory) {
+    jointPositionHistory_ = jointPositionHistory;
+  }
+  [[nodiscard]] void setJointVelocityHistory (Eigen::VectorXd &jointVelocityHistory) {
+    jointVelocityHistory_ = jointVelocityHistory;
+  }
+
+  [[nodiscard]] void setPrevAction (Eigen::VectorXd &prevAction) {
+    previousAction_ = prevAction;
+  }
+
+  [[nodiscard]] void setPrevPrevAction (Eigen::VectorXd &prevprevAction) {
+    prevprevAction_ = prevprevAction;
+  }
+
   [[nodiscard]] const Eigen::VectorXd &getJointPositionHistory() const { return jointPositionHistory_; }
   [[nodiscard]] const Eigen::VectorXd &getJointVelocityHistory() const { return jointVelocityHistory_; }
+  [[nodiscard]] const Eigen::VectorXd &getPrevAction() const { return previousAction_; }
+  [[nodiscard]] const Eigen::VectorXd &getPrevPrevAction() const { return prevprevAction_; }
 
   [[nodiscard]] static constexpr int getObDim() { return obDim_; }
   [[nodiscard]] static constexpr int getActionDim() { return actionDim_; }
@@ -246,6 +305,7 @@ class RaiboPositionController {
   [[nodiscard]] inline const std::vector<std::string> &getStepDataTag() const { return stepDataTag_; }
   [[nodiscard]] inline const Eigen::VectorXd &getStepData() const { return stepData_; }
 
+ private:
   // robot configuration variables
   raisim::ArticulatedSystem *raibo_;
   std::vector<size_t> footIndices_, footFrameIndicies_;
@@ -255,7 +315,7 @@ class RaiboPositionController {
   static constexpr size_t historyLength_ = 14;
 //  static constexpr size_t obDim_ = 333;
   static constexpr size_t obDim_ = 133;
-  static constexpr double simDt_ = .001;
+  static constexpr double simDt_ = 0.001;
   static constexpr int gcDim_ = 19;
   static constexpr int gvDim_ = 18;
 
@@ -270,12 +330,14 @@ class RaiboPositionController {
   Eigen::VectorXd historyTempMemory_;
   std::array<bool, 4> footContactState_;
   raisim::Mat<3, 3> baseRot_;
-  Eigen::Vector2d command_;
+  Eigen::Vector3d command_;
+  Eigen::Vector3d pos_0;
+  Eigen::Vector3d target;
 
   // robot observation variables
 //  std::vector<raisim::VecDyn> heightScan_;
 //  Eigen::VectorXi scanConfig_;
-  Eigen::VectorXd obDouble_, obMean_, obStd_;
+  Eigen::VectorXd obDouble_, obMean_, obStd_, obNormed_;
 //  std::vector<std::vector<raisim::Vec<2>>> scanPoint_;
 //  Eigen::MatrixXd scanSin_;
 //  Eigen::MatrixXd scanCos_;
@@ -288,16 +350,16 @@ class RaiboPositionController {
   Eigen::VectorXd jointTarget_, jointTargetDelta_;
   Eigen::VectorXd jointPgain_, jointDgain_;
 
-  // reward variables
-  double commandTrackingRewardCoeff = 0., commandTrackingReward_ = 0.;
-  double contactSwitchRewardCoeff_ = 0., contactSwitchReward_ = 0.;
-  double torqueRewardCoeff_ = 0., torqueReward_ = 0.;
-  double smoothRewardCoeff_ = 0., smoothReward_ = 0.;
-  double orientationRewardCoeff_ = 0., orientationReward_ = 0.;
-  double jointVelocityRewardCoeff_ = 0., jointVelocityReward_ = 0.;
-  double slipRewardCoeff_ = 0., slipReward_ = 0.;
-  double airtimeRewardCoeff_ = 0., airtimeReward_ = 0.;
-  double terminalRewardCoeff_ = 0.0;
+//  // reward variables
+//  double commandTrackingRewardCoeff = 0., commandTrackingReward_ = 0.;
+//  double contactSwitchRewardCoeff_ = 0., contactSwitchReward_ = 0.;
+//  double torqueRewardCoeff_ = 0., torqueReward_ = 0.;
+//  double smoothRewardCoeff_ = 0., smoothReward_ = 0.;
+//  double orientationRewardCoeff_ = 0., orientationReward_ = 0.;
+//  double jointVelocityRewardCoeff_ = 0., jointVelocityReward_ = 0.;
+//  double slipRewardCoeff_ = 0., slipReward_ = 0.;
+//  double airtimeRewardCoeff_ = 0., airtimeReward_ = 0.;
+//  double terminalRewardCoeff_ = 0.0;
 
   // exported data
   Eigen::VectorXd stepData_;
