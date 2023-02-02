@@ -2,12 +2,12 @@
 // Created by jemin on 2/25/20.
 //
 
-#ifndef _RAISIM_GYM_RAIBO_POSITION_DESTINATION2_HPP
-#define _RAISIM_GYM_RAIBO_POSITION_DESTINATION2_HPP
+#ifndef _RAISIM_GYM_RAIBO_POSITION_DESTINATION_HPP
+#define _RAISIM_GYM_RAIBO_POSITION_DESTINATION_HPP
 
-#include "BasicEigenTypes.hpp"
 #include "raisim/World.hpp"
 #include <set>
+#include "helper/BasicEigenTypes.hpp"
 
 namespace raisim {
 
@@ -17,17 +17,23 @@ class RaiboPositionController {
     raibo_ = reinterpret_cast<raisim::ArticulatedSystem *>(world->getObject("robot"));
     gc_.resize(raibo_->getGeneralizedCoordinateDim());
     gv_.resize(raibo_->getDOF());
+    gc_init_.resize(raibo_->getGeneralizedCoordinateDim());
+    gv_init_.setZero(raibo_->getDOF());
     jointVelocity_.resize(12);
 
     /// Observation
     jointPositionHistory_.setZero(nJoints_ * historyLength_);
-//    std::cout << "RaiboPosition Controller Create !!" << std::endl;
     jointVelocityHistory_.setZero(nJoints_ * historyLength_);
     historyTempMemory_.setZero(nJoints_ * historyLength_);
     nominalJointConfig_.setZero(nJoints_);
     nominalJointConfig_ << 0, 0.56, -1.12, 0, 0.56, -1.12, 0, 0.56, -1.12, 0, 0.56, -1.12;
     jointTarget_.setZero(nJoints_);
     jointTargetDelta_.setZero(nJoints_);
+
+    gc_init_ << 0, 0, 0.4725, 1, 0.0, 0.0, 0.0,
+                    0.0, 0.559836, -1.119672, -0.0, 0.559836, -1.119672, 0.0, 0.559836, -1.119672, -0.0, 0.559836, -1.119672;
+
+    raibo_->setState(gc_init_, gv_init_);
 
     /// action
     actionMean_.setZero(actionDim_);
@@ -106,6 +112,8 @@ class RaiboPositionController {
     return true;
   };
 
+  bool init(raisim::World *world) { return true; }
+
   void updateHistory() {
     /// joint angles
     historyTempMemory_ = jointPositionHistory_;
@@ -176,7 +184,7 @@ class RaiboPositionController {
     return true;
   }
 
-  void reset(raisim::World *world) {
+  void reset() {
     raibo_->getState(gc_, gv_);
     jointTarget_ = gc_.tail(12);
     previousAction_.setZero();
@@ -200,11 +208,12 @@ class RaiboPositionController {
 //    return false;
 //  }
 
-  void updateObservation(raisim::World *world) {
+  void updateObservation() {
 //    updateHeightScan(map, gen_, normDist_);
     updateStateVariables();
     /// height of the origin of the body frame
 //    obDouble_[0] = gc_[2] - map->getHeight(gc_[0], gc_[1]);
+
     obDouble_[0] = gc_[2];
 
     /// body orientation
@@ -249,6 +258,7 @@ class RaiboPositionController {
     /// command
     obDouble_.segment(34 + 2 * nJoints_ * 4, 2) << targetRelBody[0], targetRelBody[1];
     obDouble_[34 + 2 * nJoints_ * 4 + 2] = std::min(3., dist);
+    
   }
 
   Eigen::Vector3d getTargetPosition() {
@@ -262,6 +272,7 @@ class RaiboPositionController {
     pos_0(2) = 0;
     Eigen::Vector3d command_w;
     command_w = baseRot_.e() * command_;
+    command_w << 2,1,0;
     target << command_w(0), command_w(1), 0.56;
     target += pos_0;
 //      // project to centrifugal accel. vxy * wz = 0.3 * g
@@ -298,7 +309,7 @@ class RaiboPositionController {
   [[nodiscard]] static constexpr double getSimDt() { return simDt_; }
   [[nodiscard]] static constexpr double getConDt() { return conDt_; }
   void getState(Eigen::Ref<EigenVec> gc, Eigen::Ref<EigenVec> gv) { gc = gc_.cast<float>(); gv = gv_.cast<float>(); }
-
+  void getStateInit(Eigen::VectorXd &gc, Eigen::VectorXd &gv) { gc = gc_init_; gv = gv_init_; }
   static void setSimDt(double dt) { RSFATAL_IF(fabs(dt - simDt_) > 1e-12, "sim dt is fixed to " << simDt_)};
   static void setConDt(double dt) { RSFATAL_IF(fabs(dt - conDt_) > 1e-12, "con dt is fixed to " << conDt_)};
 
@@ -320,7 +331,7 @@ class RaiboPositionController {
   static constexpr int gvDim_ = 18;
 
   // robot state variables
-  Eigen::VectorXd gc_, gv_;
+  Eigen::VectorXd gc_, gv_, gc_init_, gv_init_;
   Eigen::Vector3d bodyLinVel_, bodyAngVel_; /// body velocities are expressed in the body frame
   Eigen::VectorXd jointVelocity_;
   std::array<raisim::Vec<3>, 4> footPos_, footVel_;

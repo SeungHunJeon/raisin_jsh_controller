@@ -32,6 +32,7 @@ class raibotLearningController : public Controller {
   bool reset(raisim::World *world) final;
   bool terminate(raisim::World *world) final;
   bool stop(raisim::World *world) final;
+  bool warmUp(raisim::World *world);
   // torch::Tensor eigenVectorToTorchTensor(const Eigen::VectorXf &e);
   // Eigen::VectorXf torchTensorToEigenVector(const torch::Tensor &t);
 
@@ -46,6 +47,7 @@ class raibotLearningController : public Controller {
   raisim::RaiboPositionController raibotController_;
   Eigen::VectorXf obs_, obsMean_, obsVariance_, actor_input_;
   bool isRealRobot_;
+  int pd_clk_ = 0;
   int clk_ = 0;
   double control_dt_, communication_dt_;
   raisim::nn::Linear<float, 133, 12, raisim::nn::ActivationType::leaky_relu> actor_;

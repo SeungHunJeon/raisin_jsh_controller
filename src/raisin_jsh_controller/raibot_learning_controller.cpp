@@ -25,13 +25,14 @@ raibotLearningController::raibotLearningController()
   serviceSetCommand_ = this->create_service<raisin_interfaces::srv::Vector3>(
       "JSH_controller/set_command", std::bind(&raibotLearningController::setCommand, this, _1, _2)
       );
+      RSINFO(1)
 }
 
 bool raibotLearningController::create(raisim::World *world) {
   control_dt_ = 0.005;
   communication_dt_ = 0.001;
   raibotController_.create(world);
-
+  raibotController_.reset();
   isRealRobot_ = raibotParam_("real_robot");
 
   std::filesystem::path pack_path(ament_index_cpp::get_package_prefix("JSH_controller"));
@@ -39,7 +40,12 @@ bool raibotLearningController::create(raisim::World *world) {
   std::filesystem::path obs_mean_path = pack_path / std::string(param_("obs_mean_path"));
   std::filesystem::path obs_var_path = pack_path / std::string(param_("obs_var_path"));
 
+  RSINFO(actor_path.string())
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+  
   actor_.readParamFromTxt(actor_path.string());
+
+
 
   std::string in_line;
 
@@ -50,7 +56,6 @@ bool raibotLearningController::create(raisim::World *world) {
   obsMean_.setZero(raibotController_.getObDim());
   obsVariance_.setZero(raibotController_.getObDim());
   actor_input_.setZero(raibotController_.getObDim());
-
   if (obsMean_file.is_open()) {
     for (int i = 0; i < obsMean_.size(); ++i) {
       std::getline(obsMean_file, in_line);
@@ -67,7 +72,6 @@ bool raibotLearningController::create(raisim::World *world) {
 
   obsMean_file.close();
   obsVariance_file.close();
-
   return true;
 }
 
@@ -81,13 +85,42 @@ bool raibotLearningController::init(raisim::World *world) {
 
 bool raibotLearningController::advance(raisim::World *world) {
   /// 100Hz controller
+  if(clk_ == 0) {
+    Eigen::Vector3f command;
+    command << 2,1,0;
+    raibotController_.setCommand(command);
+  }
+
   if(clk_ % int(control_dt_ / communication_dt_ + 1e-10) == 0) {
     raibotController_.updateObservation();
     raibotController_.advance(obsScalingAndGetAction().head(12));
   }
-//  raibotController_.updateFilter(world, isRealRobot_);
 
+  raibotController_.updateHistory();
+  raibotController_.updateStateVariables();
+//  raibotController_.updateFilter(world, isRealRobot_);
+  if (pd_clk_ < 100) {
+    warmUp(world);
+    ++pd_clk_;
+  }
   clk_++;
+  return true;
+}
+
+bool raibotLearningController::warmUp(raisim::World *world) {
+  auto* raibot = reinterpret_cast<raisim::ArticulatedSystem*>(world->getObject("robot"));
+
+  Eigen::VectorXd jointPGain(raibot->getDOF());
+  Eigen::VectorXd jointDGain(raibot->getDOF());
+  Eigen::VectorXd gc_init;
+  Eigen::VectorXd gv_init;
+
+  jointPGain.setConstant(100.0);
+  jointDGain.setConstant(0.5);
+  raibotController_.getStateInit(gc_init, gv_init);
+  raibot->setPdGains(jointPGain, jointDGain);
+  raibot->setPdTarget(gc_init, gv_init);
+
   return true;
 }
 
@@ -95,11 +128,9 @@ Eigen::VectorXf raibotLearningController::obsScalingAndGetAction() {
 
   /// normalize the obs
   obs_ = raibotController_.getObservation().cast<float>();
-
   for (int i = 0; i < obs_.size(); ++i) {
     obs_(i) = (obs_(i) - obsMean_(i)) / std::sqrt(obsVariance_(i) + 1e-8);
   }
-
   /// concat obs and e_out and forward to the actor
   Eigen::Matrix<float, 133, 1> actor_input;
   actor_input << obs_;
@@ -111,6 +142,7 @@ Eigen::VectorXf raibotLearningController::obsScalingAndGetAction() {
 bool raibotLearningController::reset(raisim::World *world) {
   raibotController_.reset();
   clk_ = 0;
+  pd_clk_ = 0;
   return true;
 }
 
